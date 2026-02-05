@@ -159,6 +159,7 @@ public:
     void FindFileNames(Utility::string_view pattern, unsigned limit, std::function<void(const char *)> cb);
     void FindFunctions(Utility::string_view pattern, unsigned limit, std::function<void(const char *)> cb);
     HRESULT GetSource(ICorDebugModule *pModule, const std::string &sourcePath, char** fileBuf, int* fileLen);
+    HRESULT SetInMemoryPdb(const std::string &modulePath, const std::vector<uint8_t> &pdbBytes);
 
 private:
 
@@ -168,6 +169,8 @@ private:
 
     // Note, m_modulesSources have its own mutex for private data state sync.
     ModulesSources m_modulesSources;
+    std::mutex m_inMemoryPdbMutex;
+    std::unordered_map<std::string, std::vector<uint8_t>> m_inMemoryPdbByModulePath;
 
     HRESULT GetSequencePointByILOffset(
         PVOID pSymbolReaderHandle,

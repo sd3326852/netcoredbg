@@ -7,6 +7,7 @@
 #include <sstream>
 #include <vector>
 #include <iomanip>
+#include <cstdint>
 
 #include "managed/interop.h"
 #include "utils/platform.h"
@@ -477,7 +478,8 @@ HRESULT GetModuleId(ICorDebugModule *pModule, std::string &id)
     return S_OK;
 }
 
-static HRESULT LoadSymbols(IMetaDataImport *pMD, ICorDebugModule *pModule, VOID **ppSymbolReaderHandle)
+static HRESULT LoadSymbols(IMetaDataImport *pMD, ICorDebugModule *pModule, const uint8_t *inMemoryPdbData,
+                           int32_t inMemoryPdbSize, VOID **ppSymbolReaderHandle)
 {
     HRESULT Status = S_OK;
     BOOL isDynamic = FALSE;
@@ -514,8 +516,8 @@ static HRESULT LoadSymbols(IMetaDataImport *pMD, ICorDebugModule *pModule, VOID 
         isInMemory, // isFileLayout
         peBufAddress,
         peSize,
-        0,          // inMemoryPdbAddress
-        0,          // inMemoryPdbSize
+        inMemoryPdbData ? reinterpret_cast<ULONG64>(inMemoryPdbData) : 0,
+        inMemoryPdbData ? inMemoryPdbSize : 0,
         ppSymbolReaderHandle
     );
 }
@@ -532,8 +534,20 @@ HRESULT Modules::TryLoadModuleSymbols(ICorDebugModule *pModule, Module &module, 
     module.path = GetModuleFileName(pModule);
     module.name = GetFileName(module.path);
 
+    const uint8_t *inMemoryPdbData = nullptr;
+    int32_t inMemoryPdbSize = 0;
+    {
+        std::lock_guard<std::mutex> guard(m_inMemoryPdbMutex);
+        auto it = m_inMemoryPdbByModulePath.find(module.path);
+        if (it != m_inMemoryPdbByModulePath.end() && !it->second.empty())
+        {
+            inMemoryPdbData = it->second.data();
+            inMemoryPdbSize = static_cast<int32_t>(it->second.size());
+        }
+    }
+
     PVOID pSymbolReaderHandle = nullptr;
-    LoadSymbols(pMDImport, pModule, &pSymbolReaderHandle);
+    LoadSymbols(pMDImport, pModule, inMemoryPdbData, inMemoryPdbSize, &pSymbolReaderHandle);
     module.symbolStatus = pSymbolReaderHandle != nullptr ? SymbolsLoaded : SymbolsNotFound;
 
     if (module.symbolStatus == SymbolsLoaded)
@@ -817,6 +831,16 @@ HRESULT Modules::GetSource(ICorDebugModule *pModule, const std::string &sourcePa
             E_FAIL :
             Interop::GetSource(mdInfo.m_symbolReaderHandles[0], sourcePath, (PVOID*)fileBuf, fileLen);
     });
+}
+
+HRESULT Modules::SetInMemoryPdb(const std::string &modulePath, const std::vector<uint8_t> &pdbBytes)
+{
+    if (modulePath.empty())
+        return E_INVALIDARG;
+
+    std::lock_guard<std::mutex> guard(m_inMemoryPdbMutex);
+    m_inMemoryPdbByModulePath[modulePath] = pdbBytes;
+    return S_OK;
 }
 
 void Modules::CopyModulesUpdateHandlerTypes(std::vector<ToRelease<ICorDebugType>> &modulesUpdateHandlerTypes)

@@ -9,6 +9,7 @@
 #include <vector>
 #include <map>
 #include <set>
+#include <unordered_map>
 #include "interfaces/idebugger.h"
 #include "debugger/dbgshim.h"
 #include "debugger/interop_debugging.h"
@@ -94,6 +95,9 @@ protected:
 #ifdef INTEROP_DEBUGGING
     std::shared_ptr<InteropDebugging::InteropDebugger> m_sharedInteropDebugger;
 #endif // INTEROP_DEBUGGING
+
+    std::mutex m_sourceFilesMutex;
+    std::unordered_map<std::string, std::string> m_sourceFiles;
 
     Utility::RWLock m_debugProcessRWLock;
     ToRelease<ICorDebug> m_iCorDebug;
@@ -193,6 +197,8 @@ public:
     HRESULT SetExpression(FrameId frameId, const std::string &expression, int evalFlags, const std::string &value, std::string &output) override;
     HRESULT GetExceptionInfo(ThreadId threadId, ExceptionInfo &exceptionInfo) override;
     HRESULT GetSourceFile(const std::string &sourcePath, char** fileBuf, int* fileLen) override;
+    HRESULT SetInMemoryPdb(const std::string &modulePath, const std::vector<uint8_t> &pdbBytes) override;
+    HRESULT SetSourceFileContent(const std::string &sourcePath, const std::string &content) override;
     void FreeUnmanaged(PVOID mem) override;
     HRESULT HotReloadApplyDeltas(const std::string &dllFileName, const std::string &deltaMD, const std::string &deltaIL,
                                  const std::string &deltaPDB, const std::string &lineUpdates) override;
