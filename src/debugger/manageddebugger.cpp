@@ -14,6 +14,7 @@
 #include <vector>
 #include <map>
 #include <fstream>
+#include <cstring>
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -1531,9 +1532,41 @@ HRESULT ManagedDebugger::GetSourceFile(const std::string &sourcePath, char** fil
     HRESULT Status;
     IfFailRet(CheckDebugProcess());
 
+    {
+        std::lock_guard<std::mutex> guard(m_sourceFilesMutex);
+        auto it = m_sourceFiles.find(sourcePath);
+        if (it != m_sourceFiles.end())
+        {
+            const std::string &content = it->second;
+            const size_t contentSize = content.size();
+            const size_t allocSize = contentSize + 1;
+            PVOID buffer = Interop::CoTaskMemAlloc(static_cast<int32_t>(allocSize));
+            if (!buffer)
+                return E_OUTOFMEMORY;
+
+            std::memcpy(buffer, content.data(), contentSize);
+            static_cast<char*>(buffer)[contentSize] = '\0';
+            *fileBuf = static_cast<char*>(buffer);
+            *fileLen = static_cast<int>(allocSize);
+            return S_OK;
+        }
+    }
+
     ToRelease<ICorDebugModule> pModule;
     IfFailRet(GetModuleOfCurrentThreadCode(m_iCorProcess, int(GetLastStoppedThreadId()), &pModule));
     return m_sharedModules->GetSource(pModule, sourcePath, fileBuf, fileLen);
+}
+
+HRESULT ManagedDebugger::SetInMemoryPdb(const std::string &modulePath, const std::vector<uint8_t> &pdbBytes)
+{
+    return m_sharedModules->SetInMemoryPdb(modulePath, pdbBytes);
+}
+
+HRESULT ManagedDebugger::SetSourceFileContent(const std::string &sourcePath, const std::string &content)
+{
+    std::lock_guard<std::mutex> guard(m_sourceFilesMutex);
+    m_sourceFiles[sourcePath] = content;
+    return S_OK;
 }
 
 void ManagedDebugger::FreeUnmanaged(PVOID mem)

@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <thread>
 #include <future>
+#include <cctype>
 
 // note: order matters, vscodeprotocol.h should be included before winerror.h
 #include "protocols/vscodeprotocol.h"
@@ -324,6 +325,53 @@ namespace
 
         stream.flush();
     };
+
+    bool DecodeBase64(const std::string &input, std::vector<uint8_t> &output, std::string &error)
+    {
+        static const int8_t kDecTable[256] = {
+            -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+            -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+            -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
+            52,53,54,55,56,57,58,59,60,61,-1,-1,-1,64,-1,-1,
+            -1,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,
+            15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
+            -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+            41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
+            -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+            -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+            -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+            -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+            -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+            -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+            -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+            -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+        };
+
+        output.clear();
+        int val = 0;
+        int valb = -8;
+        for (unsigned char c : input)
+        {
+            int8_t d = kDecTable[c];
+            if (d == -1)
+            {
+                if (std::isspace(c))
+                    continue;
+                error = "Invalid base64 character.";
+                return false;
+            }
+            if (d == 64)
+                break;
+            val = (val << 6) + d;
+            valb += 6;
+            if (valb >= 0)
+            {
+                output.push_back(static_cast<uint8_t>((val >> valb) & 0xFF));
+                valb -= 8;
+            }
+        }
+        return true;
+    }
 }
 
 void VSCodeProtocol::EmitOutputEvent(OutputCategory category, string_view output, string_view, DWORD threadId)
@@ -491,6 +539,45 @@ static HRESULT HandleCommand(std::shared_ptr<IDebugger> &sharedDebugger, std::st
 
         AddCapabilitiesTo(body);
 
+        return S_OK;
+    } },
+    { "netcoredbg/loadSymbolsFromMemory", [&](const json &arguments, json &body){
+        const std::string modulePath = arguments.value("modulePath", std::string{});
+        if (modulePath.empty())
+            return E_INVALIDARG;
+
+        auto pdbBase64It = arguments.find("pdbBase64");
+        if (pdbBase64It != arguments.end())
+        {
+            std::vector<uint8_t> pdbBytes;
+            std::string error;
+            if (!DecodeBase64(pdbBase64It->get<std::string>(), pdbBytes, error))
+                return E_INVALIDARG;
+
+            IfFailRet(sharedDebugger->SetInMemoryPdb(modulePath, pdbBytes));
+        }
+
+        auto sourcesIt = arguments.find("sources");
+        if (sourcesIt != arguments.end())
+        {
+            for (const auto &entry : *sourcesIt)
+            {
+                const std::string path = entry.value("path", std::string{});
+                const std::string contentBase64 = entry.value("contentBase64", std::string{});
+                if (path.empty() || contentBase64.empty())
+                    return E_INVALIDARG;
+
+                std::vector<uint8_t> sourceBytes;
+                std::string error;
+                if (!DecodeBase64(contentBase64, sourceBytes, error))
+                    return E_INVALIDARG;
+
+                std::string content(sourceBytes.begin(), sourceBytes.end());
+                IfFailRet(sharedDebugger->SetSourceFileContent(path, content));
+            }
+        }
+
+        body["ok"] = true;
         return S_OK;
     } },
     { "setExceptionBreakpoints", [&](const json &arguments, json &body) {

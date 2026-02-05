@@ -100,6 +100,8 @@ public:
     virtual HRESULT SetExpression(FrameId frameId, const std::string &expression, int evalFlags, const std::string &value, std::string &output) = 0;
     virtual HRESULT GetExceptionInfo(ThreadId threadId, ExceptionInfo &exceptionInfo) = 0;
     virtual HRESULT GetSourceFile(const std::string &sourcePath, char** fileBuf, int* fileLen) = 0;
+    virtual HRESULT SetInMemoryPdb(const std::string &modulePath, const std::vector<uint8_t> &pdbBytes) = 0;
+    virtual HRESULT SetSourceFileContent(const std::string &sourcePath, const std::string &content) = 0;
     virtual void FreeUnmanaged(PVOID mem) = 0;
     virtual HRESULT HotReloadApplyDeltas(const std::string &dllFileName, const std::string &deltaMD, const std::string &deltaIL,
                                          const std::string &deltaPDB, const std::string &lineUpdates) = 0;
